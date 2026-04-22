@@ -1,0 +1,8 @@
+backend/target/
+backend/.m2/
+backend/uploads/
+frontend/dist/
+frontend/node_modules/
+.idea/
+.vscode/
+*.log

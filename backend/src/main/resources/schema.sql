@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS `user` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `account` VARCHAR(50) NOT NULL,
+  `password` VARCHAR(255) NOT NULL,
+  `role` VARCHAR(20) NOT NULL DEFAULT 'USER',
+  `name` VARCHAR(50) NOT NULL,
+  `gender` VARCHAR(10) DEFAULT NULL,
+  `school` VARCHAR(100) DEFAULT NULL,
+  `college` VARCHAR(100) DEFAULT NULL,
+  `grade` VARCHAR(20) DEFAULT NULL,
+  `avatar` VARCHAR(255) DEFAULT NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'NORMAL',
+  `last_login_time` DATETIME DEFAULT NULL,
+  `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_user_account` (`account`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `user_profile` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `user_id` BIGINT NOT NULL,
+  `native_language` VARCHAR(50) NOT NULL,
+  `target_language` VARCHAR(50) NOT NULL,
+  `language_level` VARCHAR(20) DEFAULT NULL,
+  `interest_tags` VARCHAR(255) DEFAULT NULL,
+  `target_tags` VARCHAR(255) DEFAULT NULL,
+  `available_time` VARCHAR(100) DEFAULT NULL,
+  `preferred_mode` VARCHAR(50) DEFAULT NULL,
+  `communication_goal` VARCHAR(100) DEFAULT NULL,
+  `introduction` VARCHAR(500) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_profile_user_id` (`user_id`),
+  CONSTRAINT `fk_profile_user` FOREIGN KEY (`user_id`) REFERENCES `user` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
