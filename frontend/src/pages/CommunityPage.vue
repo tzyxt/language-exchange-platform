@@ -22,6 +22,12 @@ const normalizedSearchKeyword = computed(() => {
   return (route.query.keyword || searchKeyword.value || '').toString().trim()
 })
 
+const postSummary = computed(() => ({
+  total: posts.value.length,
+  withImage: posts.value.filter((item) => item.images?.length).length,
+  discussed: posts.value.filter((item) => item.commentCount > 0).length
+}))
+
 async function load() {
   posts.value = await request('/posts?sortBy=latest')
 }
@@ -95,6 +101,10 @@ async function search() {
   searchResult.value = await request(`/search?keyword=${encodeURIComponent(searchKeyword.value.trim())}`)
 }
 
+function formatCounts(post) {
+  return `点赞 ${post.likeCount} · 收藏 ${post.favoriteCount} · 评论 ${post.commentCount}`
+}
+
 watch(
   () => route.query.keyword,
   async (keyword) => {
@@ -111,12 +121,42 @@ onMounted(load)
 
 <template>
   <div class="page-grid">
-    <section class="card span-4">
-      <h2>发布动态</h2>
+    <section class="card span-12 community-overview-card">
+      <div class="community-overview-main">
+        <span class="badge">社区分享</span>
+        <h2>把交流经验和校园见闻发出来</h2>
+        <p>发布动态、带图分享、搜索同好，也能围绕同一话题继续延伸到匹配和聊天。</p>
+        <div class="actions">
+          <span v-for="topic in topicOptions" :key="topic" class="badge secondary">{{ topic }}</span>
+        </div>
+      </div>
+      <div class="community-overview-stats">
+        <article class="community-mini-stat">
+          <strong>{{ postSummary.total }}</strong>
+          <span>当前动态</span>
+        </article>
+        <article class="community-mini-stat">
+          <strong>{{ postSummary.withImage }}</strong>
+          <span>图文内容</span>
+        </article>
+        <article class="community-mini-stat">
+          <strong>{{ postSummary.discussed }}</strong>
+          <span>已有互动</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="card span-4 community-compose-card">
+      <div class="section-heading">
+        <div>
+          <h3>发布动态</h3>
+          <p class="muted">分享今天的语言练习、活动见闻或跨文化发现。</p>
+        </div>
+      </div>
 
       <div class="field">
         <label>文字内容</label>
-        <textarea v-model="form.content" />
+        <textarea v-model="form.content" placeholder="写下你的动态内容..." />
       </div>
 
       <div class="field">
@@ -151,34 +191,41 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="card span-8">
-      <div class="actions">
+    <section class="card span-8 community-feed-card">
+      <div class="community-search-row">
         <input
           v-model="searchKeyword"
-          placeholder="搜索用户、帖子或话题"
-          style="flex: 1; padding: 12px 14px; border-radius: 16px; border: 1px solid var(--line);"
+          :placeholder="normalizedSearchKeyword || '搜索用户、帖子或话题'"
+          class="community-search-input"
         />
         <button class="secondary-button" @click="search">搜索</button>
       </div>
 
-      <div v-if="searchResult" class="item-card" style="margin-top: 16px;">
+      <div v-if="searchResult" class="community-search-result">
         <strong>搜索结果</strong>
         <p class="muted">用户 {{ searchResult.users.length }} 个，帖子 {{ searchResult.posts.length }} 条，话题 {{ searchResult.topics.length }} 个。</p>
       </div>
 
-      <div class="list" style="margin-top: 16px;">
-        <div
+      <div class="list">
+        <article
           v-for="post in posts"
           :key="post.id"
-          class="item-card"
+          class="community-post-card"
           :class="{ 'community-focus-card': route.query.focusPost === String(post.id) }"
         >
-          <div class="actions">
-            <strong>{{ post.author.name }}</strong>
-            <span class="badge secondary">{{ post.author.school }}</span>
+          <div class="community-post-head">
+            <div class="community-post-author">
+              <strong>{{ post.author.name }}</strong>
+              <span class="badge secondary">{{ post.author.school }}</span>
+            </div>
+            <span class="muted">{{ formatCounts(post) }}</span>
           </div>
 
-          <p>{{ post.content }}</p>
+          <p class="community-post-content">{{ post.content }}</p>
+
+          <div v-if="post.topics?.length" class="actions">
+            <span v-for="topic in post.topics" :key="topic" class="badge">{{ topic }}</span>
+          </div>
 
           <div v-if="post.images?.length" class="community-post-image-list">
             <img
@@ -190,19 +237,13 @@ onMounted(load)
             />
           </div>
 
-          <div class="actions">
-            <span v-for="topic in post.topics" :key="topic" class="badge">{{ topic }}</span>
-          </div>
-
-          <p class="muted">点赞 {{ post.likeCount }} · 收藏 {{ post.favoriteCount }} · 评论 {{ post.commentCount }}</p>
-
-          <div class="actions">
+          <div class="community-post-actions">
             <button class="secondary-button" @click="action(post.id, 'LIKE')">点赞</button>
             <button class="secondary-button" @click="action(post.id, 'FAVORITE')">收藏</button>
             <button class="secondary-button" @click="action(post.id, 'SHARE')">分享</button>
             <button class="ghost-button" @click="comment(post.id)">评论</button>
           </div>
-        </div>
+        </article>
       </div>
     </section>
   </div>

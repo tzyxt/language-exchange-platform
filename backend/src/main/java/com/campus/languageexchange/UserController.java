@@ -1,6 +1,7 @@
 package com.campus.languageexchange;
 
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -70,8 +71,20 @@ public class UserController {
         return ApiResponse.ok(dataStore.myOverview(userId));
     }
 
+    @DeleteMapping("/me/{userId}")
+    public ApiResponse<Void> deleteAccount(@PathVariable Long userId) {
+        dataStore.deleteAccount(userId);
+        return ApiResponse.ok("账号已注销", null);
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     public ApiResponse<Void> handleIllegalArgument(IllegalArgumentException exception) {
         return ApiResponse.fail(exception.getMessage());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ApiResponse<Void> handleOtherException(Exception exception) {
+        String message = exception.getMessage() == null || exception.getMessage().isBlank() ? "请求失败" : exception.getMessage();
+        return ApiResponse.fail(message);
     }
 }

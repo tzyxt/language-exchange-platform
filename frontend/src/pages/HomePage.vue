@@ -44,23 +44,39 @@ onMounted(load)
 
 <template>
   <div v-if="data" class="page-grid">
-    <section class="card hero-card span-12">
-      <span class="badge">智能匹配平台</span>
-      <h2>{{ data.hero.title }}</h2>
-      <p>{{ data.hero.subtitle }}</p>
-      <div class="actions">
-        <button class="primary-button" @click="router.push('/matches')">开始匹配</button>
-        <button class="ghost-button" @click="router.push('/activities')">查看活动</button>
+    <section class="card hero-card span-12 home-hero-card">
+      <div class="home-hero-main">
+        <span class="badge">智能匹配平台</span>
+        <h2>{{ data.hero.title }}</h2>
+        <p>{{ data.hero.subtitle }}</p>
+        <div class="actions">
+          <button class="primary-button" @click="router.push('/matches')">开始匹配</button>
+          <button class="ghost-button" @click="router.push('/activities')">查看活动</button>
+        </div>
+      </div>
+      <div class="home-hero-side">
+        <article class="home-mini-panel">
+          <strong>{{ data.currentUser.averageScore }}</strong>
+          <span>当前综合评分</span>
+        </article>
+        <article class="home-mini-panel">
+          <strong>{{ data.hotTopics.length }}</strong>
+          <span>热门话题</span>
+        </article>
+        <article class="home-mini-panel">
+          <strong>{{ data.upcomingActivities.length }}</strong>
+          <span>近期活动</span>
+        </article>
       </div>
     </section>
 
-    <section class="card span-4">
+    <section class="card span-4 dashboard-card">
       <h3>个人状态</h3>
       <p class="stat-value">{{ data.currentUser.averageScore }}</p>
       <p class="muted">当前资料完整度：{{ data.currentUser.profileCompleted ? '已完善' : '待完善' }}</p>
     </section>
 
-    <section class="card span-4">
+    <section class="card span-4 dashboard-card">
       <h3>热门话题</h3>
       <div class="actions">
         <button
@@ -75,7 +91,7 @@ onMounted(load)
       </div>
     </section>
 
-    <section class="card span-4">
+    <section class="card span-4 dashboard-card">
       <h3>平台公告</h3>
       <div class="list">
         <button
@@ -92,7 +108,12 @@ onMounted(load)
     </section>
 
     <section class="card span-4">
-      <h3>推荐伙伴</h3>
+      <div class="section-heading">
+        <div>
+          <h3>推荐伙伴</h3>
+          <p class="muted">优先展示更适合继续交流的对象。</p>
+        </div>
+      </div>
       <div class="list">
         <button
           v-for="match in data.recommendedMatches"
@@ -109,7 +130,12 @@ onMounted(load)
     </section>
 
     <section class="card span-4">
-      <h3>热门动态</h3>
+      <div class="section-heading">
+        <div>
+          <h3>热门动态</h3>
+          <p class="muted">看看大家最近在分享什么。</p>
+        </div>
+      </div>
       <div class="list">
         <button
           v-for="post in data.hotPosts"
@@ -125,7 +151,12 @@ onMounted(load)
     </section>
 
     <section class="card span-4">
-      <h3>近期活动</h3>
+      <div class="section-heading">
+        <div>
+          <h3>近期活动</h3>
+          <p class="muted">优先关注即将开始的活动安排。</p>
+        </div>
+      </div>
       <div class="list">
         <button
           v-for="activity in data.upcomingActivities"

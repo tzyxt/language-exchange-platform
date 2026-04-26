@@ -12,8 +12,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 record LoginRequest(
-    @NotBlank(message = "账号不能为空")
-    @Size(min = 4, max = 20, message = "账号长度需为 4-20 位")
+    @NotBlank(message = "账号或邮箱不能为空")
+    @Size(min = 4, max = 100, message = "账号或邮箱长度需为 4-100 位")
     String account,
     @NotBlank(message = "密码不能为空")
     String password
@@ -21,14 +21,16 @@ record LoginRequest(
 }
 
 record RegisterRequest(
-    @NotBlank(message = "账号不能为空")
-    @Size(min = 4, max = 20, message = "账号长度需为 4-20 位")
-    @Pattern(regexp = "^[A-Za-z0-9._]+$", message = "账号只能包含字母、数字、下划线和点")
-    String account,
+    @NotBlank(message = "邮箱不能为空")
+    @Size(max = 50, message = "邮箱不能超过 50 位")
+    @Pattern(regexp = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", message = "邮箱格式不正确")
+    String email,
     @NotBlank(message = "密码不能为空")
     @Size(min = 8, max = 20, message = "密码长度需为 8-20 位")
-    @Pattern(regexp = "^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d~!@#$%^&*()_+\\-={}\\[\\]:;\"'<>,.?/\\\\|`]+$",
-        message = "密码需同时包含字母和数字")
+    @Pattern(
+        regexp = "^(?=.*[A-Za-z])(?=.*\\d)[A-Za-z\\d~!@#$%^&*()_+\\-={}\\[\\]:;\"'<>,.?/\\\\|`]+$",
+        message = "密码需同时包含字母和数字"
+    )
     String password,
     @NotBlank(message = "请再次输入密码")
     String confirmPassword,
@@ -36,7 +38,21 @@ record RegisterRequest(
     String role,
     @NotBlank(message = "昵称不能为空")
     @Size(min = 2, max = 20, message = "昵称长度需为 2-20 位")
-    String name
+    String name,
+    @NotBlank(message = "验证码不能为空")
+    @Pattern(regexp = "^\\d{6}$", message = "验证码需为 6 位数字")
+    String verificationCode
+) {
+    String account() {
+        return email;
+    }
+}
+
+record SendEmailCodeRequest(
+    @NotBlank(message = "邮箱不能为空")
+    @Size(max = 50, message = "邮箱不能超过 50 位")
+    @Pattern(regexp = "^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", message = "邮箱格式不正确")
+    String email
 ) {
 }
 
@@ -110,6 +126,9 @@ record SaveActivityRequest(
     @NotBlank String status,
     @NotNull Long createdBy
 ) {
+}
+
+record ProcessActivitySignupRequest(@NotBlank String status) {
 }
 
 record UpdateUserStatusRequest(@NotBlank String status) {

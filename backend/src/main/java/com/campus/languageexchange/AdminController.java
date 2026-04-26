@@ -3,8 +3,8 @@ package com.campus.languageexchange;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -53,6 +53,13 @@ public class AdminController {
     @PutMapping("/activities/{activityId}")
     public ApiResponse<Map<String, Object>> updateActivity(@PathVariable Long activityId, @Valid @RequestBody SaveActivityRequest request) {
         return ApiResponse.ok("活动已更新", dataStore.saveActivity(activityId, request));
+    }
+
+    @PatchMapping("/activities/{activityId}/signups/{signupId}")
+    public ApiResponse<Map<String, Object>> processActivitySignup(@PathVariable Long activityId,
+                                                                  @PathVariable Long signupId,
+                                                                  @Valid @RequestBody ProcessActivitySignupRequest request) {
+        return ApiResponse.ok("报名记录已处理", dataStore.processActivitySignup(activityId, signupId, request.status()));
     }
 
     @GetMapping("/reports")

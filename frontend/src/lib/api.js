@@ -1,7 +1,12 @@
 import { sessionStore, setSession } from '../stores/session'
 
-export const API_BASE = 'http://localhost:8080/api'
-export const API_ORIGIN = 'http://localhost:8080'
+function trimTrailingSlash(value) {
+  return value.replace(/\/+$/, '')
+}
+
+export const API_ORIGIN = trimTrailingSlash(typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8080')
+export const API_BASE = trimTrailingSlash(`${API_ORIGIN}/api`)
+export const WS_ORIGIN = API_ORIGIN.replace(/^http/i, 'ws')
 
 export async function request(path, options = {}) {
   const headers = { ...(options.headers || {}) }
@@ -44,10 +49,23 @@ export async function register(form) {
   return data
 }
 
+export async function sendRegisterEmailCode(email) {
+  return request('/auth/email-code', {
+    method: 'POST',
+    body: JSON.stringify({ email })
+  })
+}
+
 export async function resetPassword(form) {
   return request('/auth/reset-password', {
     method: 'POST',
     body: JSON.stringify(form)
+  })
+}
+
+export async function deleteAccount(userId) {
+  return request(`/me/${userId}`, {
+    method: 'DELETE'
   })
 }
 

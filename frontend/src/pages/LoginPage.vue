@@ -13,9 +13,9 @@ const touched = reactive({ account: false, password: false })
 
 const accountError = computed(() => {
   if (!touched.account) return ''
-  if (!form.account.trim()) return '请输入账号'
-  if (form.account.trim().length < 4) return '账号至少 4 位'
-  if (form.account.trim().length > 20) return '账号不能超过 20 位'
+  if (!form.account.trim()) return '请输入账号或邮箱'
+  if (form.account.trim().length < 4) return '账号或邮箱至少 4 位'
+  if (form.account.trim().length > 100) return '账号或邮箱不能超过 100 位'
   return ''
 })
 
@@ -63,39 +63,35 @@ async function submit() {
         <div class="login-visual-copy">
           <span class="login-kicker">Campus Edition</span>
           <h1>欢迎回来</h1>
-          <p>连接全球学伴，在语言互助与跨文化交流中发现新的可能。</p>
+          <p>旧用户继续用原账号登录，新注册用户可直接用邮箱登录。</p>
 
           <div class="login-quote">
-            <p>“每一场对话，都是一次新的理解与靠近。”</p>
+            <p>“每一次交流，都是一次新的连接。”</p>
             <span>Language Exchange Platform</span>
           </div>
 
           <div class="login-demo-card">
-            <strong>登录提示</strong>
-            <p>请输入你自己的账号和密码登录，系统不再默认预填测试账号。</p>
-            <p>管理员账号请从独立后台入口登录，普通用户只使用当前入口。</p>
+            <strong>登录说明</strong>
+            <p>支持“旧账号 + 密码”登录，也支持“邮箱 + 密码”登录。</p>
+            <p>管理员账号请从后台入口登录。</p>
           </div>
         </div>
       </section>
 
       <section class="login-panel">
-        <div class="login-panel-mark">文A</div>
+        <div class="login-panel-mark">登</div>
         <div class="login-panel-inner">
           <header class="login-panel-header">
             <h2>用户登录</h2>
-            <p>开始您的跨文化交流之旅</p>
+            <p>继续你的语言交流之旅</p>
           </header>
 
           <div v-if="error" class="message-box">{{ error }}</div>
 
           <div class="login-form">
             <label class="login-field">
-              <span>账号 / 邮箱 / 手机号</span>
-              <input
-                v-model="form.account"
-                placeholder="请输入您的账号"
-                @blur="touched.account = true"
-              />
+              <span>账号 / 邮箱</span>
+              <input v-model="form.account" placeholder="请输入账号或邮箱" @blur="touched.account = true" />
               <small v-if="accountError" class="field-error">{{ accountError }}</small>
             </label>
 
@@ -105,7 +101,7 @@ async function submit() {
                 <input
                   v-model="form.password"
                   :type="showPassword ? 'text' : 'password'"
-                  placeholder="请输入您的密码"
+                  placeholder="请输入密码"
                   @blur="touched.password = true"
                 />
                 <button type="button" class="login-eye" @click="showPassword = !showPassword">
@@ -133,7 +129,7 @@ async function submit() {
             <div class="login-footer">
               <span>还没有账号？</span>
               <button type="button" class="login-link-button accent" @click="router.push('/register')">
-                立即注册
+                邮箱注册
               </button>
             </div>
 

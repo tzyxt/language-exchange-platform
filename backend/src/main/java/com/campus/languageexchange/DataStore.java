@@ -16,7 +16,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -24,6 +26,8 @@ import java.util.stream.Collectors;
 public class DataStore {
 
     private static final DateTimeFormatter DISPLAY_TIME = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.CHINA);
+    private static final int EMAIL_CODE_EXPIRE_MINUTES = 10;
+    private static final int EMAIL_CODE_RESEND_COOLDOWN_SECONDS = 60;
 
     private final AtomicLong userId = new AtomicLong(1000);
     private final AtomicLong matchId = new AtomicLong(2000);
@@ -44,16 +48,21 @@ public class DataStore {
     private final List<ReviewData> reviews = new ArrayList<>();
     private final Map<Long, ReportData> reports = new LinkedHashMap<>();
     private final Map<Long, List<NotificationData>> notifications = new HashMap<>();
+    private final Map<String, EmailCodeData> registerEmailCodes = new ConcurrentHashMap<>();
     private final JdbcTemplate jdbcTemplate;
+    private final MailService mailService;
+    private final Random random = new Random();
 
-    public DataStore(JdbcTemplate jdbcTemplate) {
+    public DataStore(JdbcTemplate jdbcTemplate, MailService mailService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.mailService = mailService;
         seed();
     }
 
     public synchronized Map<String, Object> login(LoginRequest request) {
+        String loginAccount = Optional.ofNullable(request.account()).orElse("").trim();
         UserData user = users.values().stream()
-            .filter(item -> item.account.equalsIgnoreCase(request.account()))
+            .filter(item -> item.account.equalsIgnoreCase(loginAccount))
             .findFirst()
             .orElseThrow(() -> new IllegalArgumentException("账号不存在"));
         if (!Objects.equals(user.password, request.password())) {
@@ -68,6 +77,8 @@ public class DataStore {
     }
 
     public synchronized Map<String, Object> register(RegisterRequest request) {
+        String normalizedEmail = normalizeEmail(request.email());
+        assertEmailCode(normalizedEmail, request.verificationCode());
         if (!Objects.equals(request.password(), request.confirmPassword())) {
             throw new IllegalArgumentException("两次输入的密码不一致");
         }
@@ -95,8 +106,27 @@ public class DataStore {
             "周末晚上", "线上聊天", "口语练习", "刚加入平台，期待认识新的语言伙伴。");
         users.put(user.id, user);
         persistUser(user);
+        registerEmailCodes.remove(normalizedEmail);
         notifyUser(user.id, "欢迎加入平台", "请先完善资料，以获取更准确的智能推荐。", "SYSTEM");
         return Map.of("token", "demo-token-" + user.id, "currentUser", userMap(user, true));
+    }
+
+    public synchronized void sendRegisterEmailCode(SendEmailCodeRequest request) {
+        String normalizedEmail = normalizeEmail(request.email());
+        boolean exists = users.values().stream().anyMatch(item -> item.account.equalsIgnoreCase(normalizedEmail));
+        if (exists) {
+            throw new IllegalArgumentException("该邮箱已注册");
+        }
+
+        EmailCodeData existing = registerEmailCodes.get(normalizedEmail);
+        LocalDateTime now = LocalDateTime.now();
+        if (existing != null && existing.sentAt.plusSeconds(EMAIL_CODE_RESEND_COOLDOWN_SECONDS).isAfter(now)) {
+            throw new IllegalArgumentException("请稍后再重新发送验证码");
+        }
+
+        String code = "%06d".formatted(random.nextInt(1_000_000));
+        mailService.sendVerificationCode(normalizedEmail, code);
+        registerEmailCodes.put(normalizedEmail, new EmailCodeData(code, now, now.plusMinutes(EMAIL_CODE_EXPIRE_MINUTES)));
     }
 
     public synchronized Map<String, Object> checkAccountAvailability(String account) {
@@ -119,6 +149,31 @@ public class DataStore {
         user.password = request.newPassword();
         user.updatedAt = LocalDateTime.now();
         persistUser(user);
+    }
+
+    public synchronized void deleteAccount(Long userIdValue) {
+        UserData user = requireUser(userIdValue);
+        if ("ADMIN".equalsIgnoreCase(user.role)) {
+            throw new IllegalArgumentException("管理员账号暂不支持注销");
+        }
+
+        matches.removeIf(match -> Objects.equals(match.userId, userIdValue) || Objects.equals(match.targetUserId, userIdValue));
+        sessions.entrySet().removeIf(entry -> Objects.equals(entry.getValue().userId, userIdValue) || Objects.equals(entry.getValue().peerUserId, userIdValue));
+        posts.entrySet().removeIf(entry -> Objects.equals(entry.getValue().userId, userIdValue));
+        reviews.removeIf(review -> Objects.equals(review.fromUserId, userIdValue) || Objects.equals(review.toUserId, userIdValue));
+        reports.entrySet().removeIf(entry -> Objects.equals(entry.getValue().reportUserId, userIdValue)
+            || ("USER".equalsIgnoreCase(entry.getValue().targetType) && Objects.equals(entry.getValue().targetId, userIdValue)));
+        notifications.remove(userIdValue);
+
+        activities.entrySet().removeIf(entry -> Objects.equals(entry.getValue().createdBy, userIdValue));
+        activities.values().forEach(activity -> {
+            activity.signups.removeIf(signup -> Objects.equals(signup.userId, userIdValue));
+            activity.reviews.removeIf(review -> Objects.equals(review.userId, userIdValue));
+        });
+
+        registerEmailCodes.remove(normalizeEmail(user.account));
+        users.remove(userIdValue);
+        deleteUserFromDatabase(userIdValue);
     }
 
     public synchronized Map<String, Object> homeSummary(Long id) {
@@ -338,18 +393,30 @@ public class DataStore {
         Map<String, Object> data = new LinkedHashMap<>(activityMap(activity, userIdValue));
         data.put("participants", activity.signups.stream().map(this::signupMap).toList());
         data.put("reviews", activity.reviews.stream().map(this::activityReviewMap).toList());
+        boolean joined = activity.signups.stream()
+            .anyMatch(signup -> Objects.equals(signup.userId, userIdValue) && occupiesActivitySlot(signup.signupStatus));
+        boolean reviewed = activity.reviews.stream().anyMatch(review -> Objects.equals(review.userId, userIdValue));
+        data.put("canReview", joined && !reviewed);
         return data;
     }
 
     public synchronized Map<String, Object> signupActivity(Long activityIdValue, ActivitySignupRequest request) {
         ActivityData activity = requireActivity(activityIdValue);
         requireUser(request.userId());
-        long successCount = activity.signups.stream().filter(signup -> "SUCCESS".equalsIgnoreCase(signup.signupStatus)).count();
+        if (!"PUBLISHED".equalsIgnoreCase(activity.status)) {
+            throw new IllegalArgumentException("当前活动暂未开放报名");
+        }
+        if (!activity.startTime.isAfter(LocalDateTime.now())) {
+            throw new IllegalArgumentException("活动已开始，无法继续报名");
+        }
+        long successCount = activity.signups.stream()
+            .filter(signup -> "SUCCESS".equalsIgnoreCase(signup.signupStatus))
+            .count();
         if (activity.limitCount != null && successCount >= activity.limitCount) {
             throw new IllegalArgumentException("活动报名人数已满");
         }
         boolean exists = activity.signups.stream()
-            .anyMatch(signup -> Objects.equals(signup.userId, request.userId()) && "SUCCESS".equalsIgnoreCase(signup.signupStatus));
+            .anyMatch(signup -> Objects.equals(signup.userId, request.userId()) && occupiesActivitySlot(signup.signupStatus));
         if (exists) {
             throw new IllegalArgumentException("你已报名该活动");
         }
@@ -367,11 +434,39 @@ public class DataStore {
 
     public synchronized Map<String, Object> cancelSignup(Long activityIdValue, Long userIdValue) {
         ActivityData activity = requireActivity(activityIdValue);
-        activity.signups.stream()
-            .filter(signup -> Objects.equals(signup.userId, userIdValue) && "SUCCESS".equalsIgnoreCase(signup.signupStatus))
+        if (!activity.startTime.isAfter(LocalDateTime.now())) {
+            throw new IllegalArgumentException("活动已开始，无法取消报名");
+        }
+        ActivitySignupData signup = activity.signups.stream()
+            .filter(item -> Objects.equals(item.userId, userIdValue) && "SUCCESS".equalsIgnoreCase(item.signupStatus))
             .findFirst()
-            .ifPresent(signup -> signup.signupStatus = "CANCELLED");
+            .orElseThrow(() -> new IllegalArgumentException("你当前没有可取消的报名记录"));
+        signup.signupStatus = "CANCEL_PENDING";
+        notifyUser(userIdValue, "活动取消申请已提交", "你已提交《" + activity.title + "》的取消申请，等待管理员审核。", "ACTIVITY");
         return activityMap(activity, userIdValue);
+    }
+
+    public synchronized Map<String, Object> processActivitySignup(Long activityIdValue, Long signupIdValue, String status) {
+        ActivityData activity = requireActivity(activityIdValue);
+        ActivitySignupData signup = activity.signups.stream()
+            .filter(item -> Objects.equals(item.id, signupIdValue))
+            .findFirst()
+            .orElseThrow(() -> new IllegalArgumentException("报名记录不存在"));
+        if (!"CANCEL_PENDING".equalsIgnoreCase(signup.signupStatus)) {
+            throw new IllegalArgumentException("当前报名记录无需审核");
+        }
+
+        String normalizedStatus = Optional.ofNullable(status).orElse("").trim().toUpperCase(Locale.ROOT);
+        if ("CANCELLED".equals(normalizedStatus)) {
+            signup.signupStatus = "CANCELLED";
+            notifyUser(signup.userId, "活动取消申请已通过", "管理员已通过你对《" + activity.title + "》的取消申请。", "ACTIVITY");
+        } else if ("SUCCESS".equals(normalizedStatus)) {
+            signup.signupStatus = "SUCCESS";
+            notifyUser(signup.userId, "活动取消申请未通过", "管理员已驳回你对《" + activity.title + "》的取消申请，报名仍然有效。", "ACTIVITY");
+        } else {
+            throw new IllegalArgumentException("不支持的报名处理状态");
+        }
+        return adminActivityMap(activity);
     }
 
     public synchronized Map<String, Object> reviewActivity(Long activityIdValue, ActivityReviewRequest request) {
@@ -391,7 +486,7 @@ public class DataStore {
     public synchronized Map<String, Object> myOverview(Long userIdValue) {
         long favoriteCount = posts.values().stream().filter(post -> post.favoriteUserIds.contains(userIdValue)).count();
         long activityCount = activities.values().stream().flatMap(item -> item.signups.stream())
-            .filter(signup -> Objects.equals(signup.userId, userIdValue) && "SUCCESS".equalsIgnoreCase(signup.signupStatus)).count();
+            .filter(signup -> Objects.equals(signup.userId, userIdValue) && occupiesActivitySlot(signup.signupStatus)).count();
         return Map.of(
             "profile", getProfile(userIdValue),
             "stats", Map.of(
@@ -440,7 +535,7 @@ public class DataStore {
     public synchronized List<Map<String, Object>> adminActivities() {
         return activities.values().stream()
             .sorted(Comparator.comparing((ActivityData item) -> item.startTime))
-            .map(item -> activityMap(item, item.createdBy))
+            .map(this::adminActivityMap)
             .toList();
     }
 
@@ -579,6 +674,36 @@ public class DataStore {
             user.profile.communicationGoal,
             user.profile.introduction
         );
+    }
+
+    private void deleteUserFromDatabase(Long userIdValue) {
+        jdbcTemplate.update("DELETE FROM call_record WHERE caller_id = ? OR receiver_id = ?", userIdValue, userIdValue);
+        jdbcTemplate.update("DELETE FROM chat_message WHERE sender_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM chat_message WHERE session_id IN (SELECT id FROM chat_session WHERE user_id = ? OR peer_user_id = ?)", userIdValue, userIdValue);
+        jdbcTemplate.update("DELETE FROM chat_session WHERE user_id = ? OR peer_user_id = ?", userIdValue, userIdValue);
+
+        jdbcTemplate.update("DELETE FROM post_action WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM post_comment WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM post_image WHERE post_id IN (SELECT id FROM post WHERE user_id = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM post_topic WHERE post_id IN (SELECT id FROM post WHERE user_id = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM post_comment WHERE post_id IN (SELECT id FROM post WHERE user_id = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM post_action WHERE post_id IN (SELECT id FROM post WHERE user_id = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM post WHERE user_id = ?", userIdValue);
+
+        jdbcTemplate.update("DELETE FROM activity_checkin WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity_signup WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity_review WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity_checkin WHERE activity_id IN (SELECT id FROM activity WHERE created_by = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity_signup WHERE activity_id IN (SELECT id FROM activity WHERE created_by = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity_review WHERE activity_id IN (SELECT id FROM activity WHERE created_by = ?)", userIdValue);
+        jdbcTemplate.update("DELETE FROM activity WHERE created_by = ?", userIdValue);
+
+        jdbcTemplate.update("DELETE FROM review WHERE from_user_id = ? OR to_user_id = ?", userIdValue, userIdValue);
+        jdbcTemplate.update("DELETE FROM match_record WHERE user_id = ? OR matched_user_id = ?", userIdValue, userIdValue);
+        jdbcTemplate.update("DELETE FROM report WHERE report_user_id = ? OR (target_type = 'USER' AND target_id = ?)", userIdValue, userIdValue);
+        jdbcTemplate.update("DELETE FROM notification WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM user_profile WHERE user_id = ?", userIdValue);
+        jdbcTemplate.update("DELETE FROM user WHERE id = ?", userIdValue);
     }
 
     private void seed() {
@@ -935,8 +1060,14 @@ public class DataStore {
     }
 
     private Map<String, Object> activityMap(ActivityData activity, Long userIdValue) {
-        long signupCount = activity.signups.stream().filter(signup -> "SUCCESS".equalsIgnoreCase(signup.signupStatus)).count();
-        boolean joined = activity.signups.stream().anyMatch(signup -> Objects.equals(signup.userId, userIdValue) && "SUCCESS".equalsIgnoreCase(signup.signupStatus));
+        long signupCount = activity.signups.stream()
+            .filter(signup -> "SUCCESS".equalsIgnoreCase(signup.signupStatus))
+            .count();
+        ActivitySignupData currentSignup = activity.signups.stream()
+            .filter(signup -> Objects.equals(signup.userId, userIdValue))
+            .max(Comparator.comparing(signup -> signup.signupTime))
+            .orElse(null);
+        boolean joined = currentSignup != null && occupiesActivitySlot(currentSignup.signupStatus);
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("id", activity.id);
         map.put("title", activity.title);
@@ -952,8 +1083,23 @@ public class DataStore {
         map.put("status", activity.status);
         map.put("signupCount", signupCount);
         map.put("joined", joined);
+        map.put("signupStatus", currentSignup == null ? "NONE" : currentSignup.signupStatus);
         map.put("reviewCount", activity.reviews.size());
         map.put("createdBy", activity.createdBy);
+        return map;
+    }
+
+    private boolean occupiesActivitySlot(String signupStatus) {
+        return "SUCCESS".equalsIgnoreCase(signupStatus) || "CANCEL_PENDING".equalsIgnoreCase(signupStatus);
+    }
+
+    private Map<String, Object> adminActivityMap(ActivityData activity) {
+        Map<String, Object> map = new LinkedHashMap<>(activityMap(activity, activity.createdBy));
+        map.put("participants", activity.signups.stream().map(this::signupMap).toList());
+        map.put("reviews", activity.reviews.stream().map(this::activityReviewMap).toList());
+        map.put("cancelRequestCount", activity.signups.stream()
+            .filter(signup -> "CANCEL_PENDING".equalsIgnoreCase(signup.signupStatus))
+            .count());
         return map;
     }
 
@@ -1070,6 +1216,24 @@ public class DataStore {
 
     private boolean equalsIgnoreCase(String left, String right) {
         return Optional.ofNullable(left).orElse("").equalsIgnoreCase(Optional.ofNullable(right).orElse(""));
+    }
+
+    private String normalizeEmail(String email) {
+        return Optional.ofNullable(email).orElse("").trim().toLowerCase(Locale.ROOT);
+    }
+
+    private void assertEmailCode(String email, String verificationCode) {
+        EmailCodeData codeData = registerEmailCodes.get(email);
+        if (codeData == null) {
+            throw new IllegalArgumentException("请先获取邮箱验证码");
+        }
+        if (codeData.expireAt.isBefore(LocalDateTime.now())) {
+            registerEmailCodes.remove(email);
+            throw new IllegalArgumentException("验证码已过期，请重新获取");
+        }
+        if (!Objects.equals(codeData.code, verificationCode)) {
+            throw new IllegalArgumentException("验证码不正确");
+        }
     }
 
     private List<String> emptyIfNull(List<String> list) {
@@ -1255,6 +1419,18 @@ public class DataStore {
         String reason;
         String status;
         LocalDateTime createdAt;
+    }
+
+    private static class EmailCodeData {
+        String code;
+        LocalDateTime sentAt;
+        LocalDateTime expireAt;
+
+        EmailCodeData(String code, LocalDateTime sentAt, LocalDateTime expireAt) {
+            this.code = code;
+            this.sentAt = sentAt;
+            this.expireAt = expireAt;
+        }
     }
 
     private static class NotificationData {
